@@ -1167,6 +1167,6 @@ void snd_compress_free(struct snd_card *card, struct snd_compr *compr)
 }
 EXPORT_SYMBOL(snd_compress_free);
 
-static int snd_compress_add_device(struct snd_compr *device)
+MODULE_DESCRIPTION("ALSA Compressed offload framework");
 MODULE_AUTHOR("Vinod Koul <vinod.koul@linux.intel.com>");
 MODULE_LICENSE("GPL v2");
