@@ -92,8 +92,8 @@ if [ -d "$KPM_DIR" ]; then
 
     KPM_SRCS=""
     for dir in base patch/common patch/module patch/ksyms patch/android; do
-        for f in "$KPM_DIR/$dir"/*.c "$KPM_DIR/$dir"/*.S 2>/dev/null; do
-            [ -f "$f" ] && KPM_SRCS="$KPM_SRCS $f"
+        for f in "$KPM_DIR/$dir"/*.c "$KPM_DIR/$dir"/*.S; do
+            [ -f "$f" ] 2>/dev/null && KPM_SRCS="$KPM_SRCS $f"
         done
     done
     KPM_SRCS="$KPM_SRCS $KPM_DIR/patch/patch.c"
@@ -113,7 +113,7 @@ if [ -d "$KPM_DIR" ]; then
     done
 
     echo "  [KPM] LD kpimg.elf"
-    $LD -nostdlib -static -no-pie -T"$KPM_DIR/kpimg.lds" -e start -o "$KPM_DIR/kpimg.elf" $KPM_OBJS 2>&1 || echo "  [KPM] WARNING: kpimg link failed (non-fatal)"
+    $LD -nostdlib -static -no-pie --unresolved-symbols=ignore-all -T"$KPM_DIR/kpimg.lds" -e start -o "$KPM_DIR/kpimg.elf" $KPM_OBJS 2>&1 || echo "  [KPM] WARNING: kpimg link failed (non-fatal)"
 
     if [ -f "$KPM_DIR/kpimg.elf" ]; then
         echo "  [KPM] OBJCOPY kpimg"

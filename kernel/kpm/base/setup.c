@@ -4,7 +4,7 @@
  */
 
 #include "setup.h"
-#include "../../version"
+#include "../version"
 
 uint64_t setup_find_kallsyms_lookup_name_offset(uint64_t kernel_pa, setup_preset_t *preset)
 {

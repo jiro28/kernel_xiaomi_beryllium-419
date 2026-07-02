@@ -14,7 +14,7 @@
 #include <barrier.h>
 #include <stdarg.h>
 
-#include "../../banner"
+#include "../banner"
 #include "start.h"
 #include "hook.h"
 #include "tlsf.h"
