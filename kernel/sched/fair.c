@@ -2862,6 +2862,8 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
  * memory. This allows lockless observations without ever seeing the negative
  * values.
  */
+#define MIN_DIVIDER (LOAD_AVG_MAX - 1024)
+
 #define add_positive(_ptr, _val) do {                           \
 	typeof(_ptr) ptr = (_ptr);                              \
 	typeof(_val) val = (_val);                              \
@@ -2924,6 +2926,9 @@ dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	sub_positive(&cfs_rq->avg.load_avg, se->avg.load_avg);
 	sub_positive(&cfs_rq->avg.load_sum, se_weight(se) * se->avg.load_sum);
+	/* See update_tg_cfs_util() */
+	cfs_rq->avg.load_sum = max_t(u64, cfs_rq->avg.load_sum,
+					  cfs_rq->avg.load_avg * MIN_DIVIDER);
 }
 #else
 static inline void
@@ -3360,10 +3365,12 @@ void set_task_rq_fair(struct sched_entity *se,
 static inline void
 update_tg_cfs_util(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq *gcfs_rq)
 {
-	long delta = gcfs_rq->avg.util_avg - se->avg.util_avg;
+	long delta_avg = gcfs_rq->avg.util_avg - se->avg.util_avg;
+	long delta_sum;
+	u32 new_sum;
 
 	/* Nothing to update */
-	if (!delta)
+	if (!delta_avg)
 		return;
 
 	/*
@@ -3376,11 +3383,23 @@ update_tg_cfs_util(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq
 
 	/* Set new sched_entity's utilization */
 	se->avg.util_avg = gcfs_rq->avg.util_avg;
-	se->avg.util_sum = se->avg.util_avg * LOAD_AVG_MAX;
+	new_sum = se->avg.util_avg * LOAD_AVG_MAX;
+	delta_sum = (long)new_sum - (long)se->avg.util_sum;
+	se->avg.util_sum = new_sum;
 
 	/* Update parent cfs_rq utilization */
-	add_positive(&cfs_rq->avg.util_avg, delta);
-	cfs_rq->avg.util_sum = cfs_rq->avg.util_avg * LOAD_AVG_MAX;
+	add_positive(&cfs_rq->avg.util_avg, delta_avg);
+	add_positive(&cfs_rq->avg.util_sum, delta_sum);
+	/*
+	 * Because of rounding, se->util_sum might end up being +1 more than
+	 * cfs->util_sum. Although this is not a problem by itself, detaching
+	 * a lot of tasks with the rounding problem between 2 updates of
+	 * util_avg (~1ms) can make cfs->util_sum becoming null whereas
+	 * cfs_util_avg is not. Check that util_sum is still above its lower
+	 * bound for the new util_avg.
+	 */
+	cfs_rq->avg.util_sum = max_t(u32, cfs_rq->avg.util_sum,
+					  cfs_rq->avg.util_avg * MIN_DIVIDER);
 }
 
 static inline void
@@ -3564,10 +3583,16 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 		r = removed_load;
 		sub_positive(&sa->load_avg, r);
 		sub_positive(&sa->load_sum, r * divider);
+		/* See update_tg_cfs_util() */
+		sa->load_sum = max_t(u64, sa->load_sum,
+					  sa->load_avg * MIN_DIVIDER);
 
 		r = removed_util;
 		sub_positive(&sa->util_avg, r);
 		sub_positive(&sa->util_sum, r * divider);
+		/* See update_tg_cfs_util() */
+		sa->util_sum = max_t(u32, sa->util_sum,
+					  sa->util_avg * MIN_DIVIDER);
 
 		add_tg_cfs_propagate(cfs_rq, -(long)removed_runnable_sum);
 
@@ -3650,6 +3675,9 @@ static void detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	dequeue_load_avg(cfs_rq, se);
 	sub_positive(&cfs_rq->avg.util_avg, se->avg.util_avg);
 	sub_positive(&cfs_rq->avg.util_sum, se->avg.util_sum);
+	/* See update_tg_cfs_util() */
+	cfs_rq->avg.util_sum = max_t(u32, cfs_rq->avg.util_sum,
+					  cfs_rq->avg.util_avg * MIN_DIVIDER);
 
 	add_tg_cfs_propagate(cfs_rq, -se->avg.load_sum);
 
