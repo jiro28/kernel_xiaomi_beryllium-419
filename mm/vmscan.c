@@ -136,6 +136,15 @@ struct scan_control {
 	 * on memory until last task zap it.
 	 */
 	struct vm_area_struct *target_vma;
+
+	/* The anonymous pages on the current node are below vm.anon_min_ratio */
+	unsigned int anon_below_min:1;
+
+	/* The clean file pages on the current node are below vm.clean_low_kbytes */
+	unsigned int clean_below_low:1;
+
+	/* The clean file pages on the current node are below vm.clean_min_kbytes */
+	unsigned int clean_below_min:1;
 };
 
 /*
@@ -176,7 +185,27 @@ int kswapd_threads_current = DEF_KSWAPD_THREADS_PER_NODE;
 /*
  * From 0 .. 100.  Higher means more swappy.
  */
-int vm_swappiness = 60;
+int vm_swappiness = 30;
+/*
+ * The vm.anon_min_ratio sysctl knob provides *hard* protection of anonymous
+ * pages. The anonymous pages on the current node won't be reclaimed when
+ * their amount is below vm.anon_min_ratio percentage of total memory.
+ * Default 0 (disabled).
+ */
+int sysctl_anon_min_ratio __read_mostly;
+/*
+ * The vm.clean_low_kbytes sysctl knob provides *best-effort* protection of
+ * clean file pages. File pages won't be reclaimed unless we threaten to OOM.
+ * Default 0 (disabled).
+ */
+unsigned long sysctl_clean_low_kbytes __read_mostly;
+/*
+ * The vm.clean_min_kbytes sysctl knob provides *hard* protection of clean
+ * file pages. File pages on the node won't be reclaimed when clean file
+ * pages are below this threshold.
+ * Default 0 (disabled).
+ */
+unsigned long sysctl_clean_min_kbytes __read_mostly;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
@@ -2503,6 +2532,14 @@ static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 	fraction[0] = ap;
 	fraction[1] = fp;
 	denominator = ap + fp + 1;
+
+	/*
+	 * Force-scan anon if clean file pages is under vm.clean_low_kbytes
+	 * or vm.clean_min_kbytes.
+	 */
+	if (sc->clean_below_low || sc->clean_below_min) {
+		scan_balance = SCAN_ANON;
+	}
 out:
 	*lru_pages = 0;
 	for_each_evictable_lru(lru) {
@@ -2547,6 +2584,19 @@ out:
 		default:
 			/* Look ma, no brain */
 			BUG();
+		}
+
+		/*
+		 * Hard protection of the working set.
+		 * Don't reclaim file pages when the amount of clean file
+		 * pages is below vm.clean_min_kbytes.
+		 */
+		if (file) {
+			if (sc->clean_below_min)
+				scan = 0;
+		} else {
+			if (sc->anon_below_min)
+				scan = 0;
 		}
 
 		*lru_pages += size;
@@ -2763,6 +2813,45 @@ static bool pgdat_memcg_congested(pg_data_t *pgdat, struct mem_cgroup *memcg)
 		(memcg && memcg_congested(pgdat, memcg));
 }
 
+static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control *sc)
+{
+	if (sysctl_anon_min_ratio) {
+		unsigned long node_mem_total, reclaimable_anon;
+
+		node_mem_total = node_present_pages(pgdat->node_id);
+
+		reclaimable_anon =
+			node_page_state(pgdat, NR_ACTIVE_ANON) +
+			node_page_state(pgdat, NR_INACTIVE_ANON) +
+			node_page_state(pgdat, NR_ISOLATED_ANON);
+
+		sc->anon_below_min = reclaimable_anon <
+			node_mem_total * sysctl_anon_min_ratio / 100;
+	} else {
+		sc->anon_below_min = 0;
+	}
+
+	if (sysctl_clean_low_kbytes || sysctl_clean_min_kbytes) {
+		unsigned long reclaimable_file, dirty, clean;
+
+		reclaimable_file =
+			node_page_state(pgdat, NR_ACTIVE_FILE) +
+			node_page_state(pgdat, NR_INACTIVE_FILE) +
+			node_page_state(pgdat, NR_ISOLATED_FILE);
+		dirty = node_page_state(pgdat, NR_FILE_DIRTY);
+		if (likely(reclaimable_file > dirty))
+			clean = (reclaimable_file - dirty) << (PAGE_SHIFT - 10);
+		else
+			clean = 0;
+
+		sc->clean_below_low = clean < sysctl_clean_low_kbytes;
+		sc->clean_below_min = clean < sysctl_clean_min_kbytes;
+	} else {
+		sc->clean_below_low = 0;
+		sc->clean_below_min = 0;
+	}
+}
+
 static bool shrink_node(pg_data_t *pgdat, struct scan_control *sc)
 {
 	struct reclaim_state *reclaim_state = current->reclaim_state;
@@ -2782,6 +2871,8 @@ static bool shrink_node(pg_data_t *pgdat, struct scan_control *sc)
 
 		nr_reclaimed = sc->nr_reclaimed;
 		nr_scanned = sc->nr_scanned;
+
+		prepare_workingset_protection(pgdat, sc);
 
 		memcg = mem_cgroup_iter(root, NULL, &reclaim);
 		do {

@@ -2124,6 +2124,29 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_doulongvec_minmax,
 	},
+	{
+		.procname	= "anon_min_ratio",
+		.data		= &sysctl_anon_min_ratio,
+		.maxlen		= sizeof(sysctl_anon_min_ratio),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one_hundred,
+	},
+	{
+		.procname	= "clean_low_kbytes",
+		.data		= &sysctl_clean_low_kbytes,
+		.maxlen		= sizeof(sysctl_clean_low_kbytes),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
+	{
+		.procname	= "clean_min_kbytes",
+		.data		= &sysctl_clean_min_kbytes,
+		.maxlen		= sizeof(sysctl_clean_min_kbytes),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
 #ifdef CONFIG_HAVE_ARCH_MMAP_RND_BITS
 	{
 		.procname	= "mmap_rnd_bits",
